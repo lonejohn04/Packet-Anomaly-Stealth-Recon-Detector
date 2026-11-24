@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netguard-detector"
+version = "1.0.0"
+description = "Python & Scapy network packet anomaly, stealth recon, DNS tunneling, and ARP spoofing detector with automated nftables quarantine and SOC web dashboard."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "NetGuard Contributors" }
+]
+keywords = ["cybersecurity", "scapy", "ids", "pcap", "nftables", "network-security", "soc"]
+dependencies = [
+    "scapy>=2.5.0",
+    "flask>=3.0.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+netguard = "netguard.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+netguard = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

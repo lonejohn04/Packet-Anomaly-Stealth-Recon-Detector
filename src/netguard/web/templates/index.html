@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NetGuard SOC — Packet Anomaly &amp; Stealth Recon Detector</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-shield" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3z"/>
+          <path d="M9 12l2 2 4-4"/>
+        </svg>
+      </div>
+      <div>
+        <h1>NetGuard SOC</h1>
+        <span class="subtitle">Packet Anomaly, Stealth Recon &amp; nftables Quarantine Engine &middot; v{{ version }}</span>
+      </div>
+    </div>
+    <nav class="nav-tabs" role="tablist">
+      <button class="tab-btn active" data-tab="analyzer" role="tab" aria-selected="true">Threat Analyzer</button>
+      <button class="tab-btn" data-tab="telemetry" role="tab" aria-selected="false">Forensic Telemetry</button>
+      <button class="tab-btn" data-tab="quarantine" role="tab" aria-selected="false">nftables Quarantine</button>
+      <button class="tab-btn" data-tab="architecture" role="tab" aria-selected="false">System Architecture</button>
+    </nav>
+    <div class="status-pill" id="engine-status">
+      <span class="pulse-dot"></span>
+      <span id="status-text">Ready</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Persistent Error/Notice Banner -->
+    <div id="alert-banner" class="banner hidden" role="alert">
+      <span id="banner-msg"></span>
+      <button id="banner-close" class="icon-btn" title="Dismiss">&times;</button>
+    </div>
+
+    <!-- TAB 1: THREAT ANALYZER -->
+    <section id="tab-analyzer" class="tab-panel active">
+      <div class="split-top">
+        <!-- Sample PCAP Picker -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2>Demonstration Sample Captures</h2>
+              <p class="muted">Select any pre-built deterministic <code>.pcap</code> scenario to inspect detections immediately.</p>
+            </div>
+          </div>
+          <div id="samples-grid" class="samples-grid">
+            <div class="muted">Loading sample catalog...</div>
+          </div>
+        </div>
+
+        <!-- Custom PCAP Upload & Tuning -->
+        <div class="card upload-card">
+          <div class="card-header">
+            <div>
+              <h2>Upload Custom PCAP</h2>
+              <p class="muted">Analyze your own Wireshark/tcpdump <code>.pcap</code> or <code>.pcapng</code> capture (max 25 MB).</p>
+            </div>
+          </div>
+          <label id="drop-zone" class="drop-zone" for="pcap-file-input">
+            <input type="file" id="pcap-file-input" accept=".pcap,.pcapng,.cap" hidden />
+            <div class="drop-icon">&#8682;</div>
+            <div class="drop-title">Drop a <code>.pcap</code> / <code>.pcapng</code> file here or click to browse</div>
+            <div id="selected-file-label" class="muted">No custom file loaded</div>
+          </label>
+          <div class="config-actions-row">
+            <button id="toggle-config-btn" class="btn btn-secondary" type="button">
+              <span>&#9881; Detector &amp; Quarantine Tuning</span>
+            </button>
+            <button id="rerun-btn" class="btn btn-primary" type="button" disabled>Re-run Analysis</button>
+            <button id="reset-config-btn" class="btn btn-ghost" type="button">Reset Defaults</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Collapsible Tuning Panel -->
+      <div id="config-drawer" class="card config-drawer hidden">
+        <div class="card-header">
+          <h3>Detection Thresholds &amp; nftables Policy</h3>
+          <span class="badge badge-info">Web UI forces safe Dry-Run mode by default</span>
+        </div>
+        <div class="config-grid">
+          <label class="field">
+            <span>Scan Window (sec)</span>
+            <input type="number" step="0.5" min="0.5" id="cfg-scan-window" />
+          </label>
+          <label class="field">
+            <span>SYN Port Threshold</span>
+            <input type="number" min="1" id="cfg-syn-threshold" />
+          </label>
+          <label class="field">
+            <span>Stealth (FIN/NULL/Xmas) Threshold</span>
+            <input type="number" min="1" id="cfg-stealth-threshold" />
+          </label>
+          <label class="field">
+            <span>Alert Cooldown (sec)</span>
+            <input type="number" step="1" min="0" id="cfg-cooldown" />
+          </label>
+          <label class="field">
+            <span>DNS Shannon Entropy</span>
+            <input type="number" step="0.1" min="0.5" max="8.0" id="cfg-dns-entropy" />
+          </label>
+          <label class="field">
+            <span>Max Subdomain Length</span>
+            <input type="number" min="5" id="cfg-dns-maxlen" />
+          </label>
+          <label class="field">
+            <span>TXT Query Length Threshold</span>
+            <input type="number" min="5" id="cfg-dns-txtlen" />
+          </label>
+          <label class="field">
+            <span>Quarantine Timeout (sec)</span>
+            <input type="number" min="10" id="cfg-q-timeout" />
+          </label>
+          <label class="field">
+            <span>Quarantine Min Severity</span>
+            <select id="cfg-q-minsev">
+              <option value="LOW">LOW</option>
+              <option value="MEDIUM">MEDIUM</option>
+              <option value="HIGH" selected>HIGH</option>
+              <option value="CRITICAL">CRITICAL</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Quarantine Allowlist CIDRs (comma-separated)</span>
+            <input type="text" id="cfg-q-allowlist" placeholder="e.g. 192.168.10.0/24, 10.0.0.1" />
+          </label>
+          <label class="field checkbox-field">
+            <input type="checkbox" id="cfg-half-open" checked />
+            <span>Exclude completed 3-way TCP handshakes</span>
+          </label>
+          <label class="field checkbox-field">
+            <input type="checkbox" id="cfg-q-enabled" checked />
+            <span>Enable Automated Quarantine (Dry-Run)</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- KPI Strip -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">Active Capture Source</div>
+          <div class="kpi-value kpi-small" id="kpi-source">—</div>
+          <div class="kpi-sub" id="kpi-duration">Select a sample or upload a PCAP</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Packets Inspected</div>
+          <div class="kpi-value" id="kpi-packets">0</div>
+          <div class="kpi-sub" id="kpi-proto-summary">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Total Alerts</div>
+          <div class="kpi-value" id="kpi-alerts">0</div>
+          <div class="kpi-sub" id="kpi-sev-summary">CRITICAL: 0 &middot; HIGH: 0</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Quarantine Actions</div>
+          <div class="kpi-value" id="kpi-quarantine">0</div>
+          <div class="kpi-sub" id="kpi-quarantine-sub">Dry-run / Allowlist protected</div>
+        </div>
+      </div>
+
+      <!-- Alerts Table + Evidence Inspector -->
+      <div class="card">
+        <div class="card-header alerts-toolbar">
+          <div>
+            <h2>Security Alerts</h2>
+            <p class="muted" id="alerts-subtitle">Run an analysis to inspect MITRE ATT&amp;CK alerts and packet evidence.</p>
+          </div>
+          <div class="toolbar-controls">
+            <div class="sev-filters" id="sev-filters">
+              <button class="filter-pill active" data-sev="ALL">All</button>
+              <button class="filter-pill" data-sev="CRITICAL">Critical</button>
+              <button class="filter-pill" data-sev="HIGH">High</button>
+              <button class="filter-pill" data-sev="MEDIUM">Medium</button>
+            </div>
+            <input type="search" id="alert-search" class="search-input" placeholder="Search IP, type, MITRE..." />
+            <button id="export-json-btn" class="btn btn-secondary" type="button" disabled>Export JSON</button>
+            <button id="export-jsonl-btn" class="btn btn-secondary" type="button" disabled>Export JSONL</button>
+          </div>
+        </div>
+
+        <div class="alerts-split">
+          <div class="table-wrap">
+            <table class="data-table" id="alerts-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Severity</th>
+                  <th>Alert Type</th>
+                  <th>MITRE</th>
+                  <th>Source &rarr; Target</th>
+                  <th>Quarantine</th>
+                  <th>Summary</th>
+                </tr>
+              </thead>
+              <tbody id="alerts-tbody">
+                <tr>
+                  <td colspan="7" class="empty-cell">No analysis executed yet. Click any sample card above to start.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <aside class="inspector-pane" id="alert-inspector">
+            <h3>Forensic Evidence Inspector</h3>
+            <p class="muted">Click any alert row to inspect protocol flags, entropy metrics, MITRE mapping, and raw JSON.</p>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: FORENSIC TELEMETRY -->
+    <section id="tab-telemetry" class="tab-panel">
+      <div class="telemetry-grid">
+        <div class="card">
+          <div class="card-header">
+            <h3>Protocol Distribution</h3>
+            <span class="muted">Packet count by primary layer</span>
+          </div>
+          <div id="chart-protocols" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Packet &amp; Alert Timeline</h3>
+            <span class="muted">Time-bucketed capture traffic vs triggered alerts</span>
+          </div>
+          <div id="chart-timeline" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>DNS Entropy vs Subdomain Length</h3>
+            <span class="muted">Dashed crosshairs mark current entropy &amp; length thresholds</span>
+          </div>
+          <div id="chart-dns-scatter" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Top Probed TCP Ports</h3>
+            <span class="muted">Destination ports hit by SYN / FIN / NULL / Xmas probes</span>
+          </div>
+          <div id="chart-ports" class="chart-box"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3>ARP IP-to-MAC Binding Table</h3>
+            <p class="muted">Observed LAN mappings; conflicting spoofed MACs are isolated without overwriting trusted bindings.</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>IP Address</th>
+                <th>Trusted / First-Seen MAC</th>
+                <th>Origin</th>
+                <th>Packets</th>
+                <th>Conflicts</th>
+                <th>Conflicting MACs</th>
+                <th>Last Seen</th>
+              </tr>
+            </thead>
+            <tbody id="arp-tbody">
+              <tr><td colspan="7" class="empty-cell">No ARP bindings observed in active capture.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: NFTABLES QUARANTINE -->
+    <section id="tab-quarantine" class="tab-panel">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>Automated Quarantine Audit Log</h2>
+            <p class="muted">Evaluated actions from the active capture analysis (protected loopback/link-local/allowlist IPs are never blocked).</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Alert ID</th>
+                <th>Source IP</th>
+                <th>Family</th>
+                <th>Status</th>
+                <th>Reason</th>
+                <th>Generated nftables Command / Guard Detail</th>
+              </tr>
+            </thead>
+            <tbody id="quarantine-tbody">
+              <tr><td colspan="6" class="empty-cell">Run an analysis with quarantine enabled to view actions.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="telemetry-grid">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3>Interactive Policy &amp; Allowlist Simulator</h3>
+              <p class="muted">Test how NetGuard validates IPs, enforces safety nets, and constructs <code>nft</code> drop rules.</p>
+            </div>
+          </div>
+          <div class="sim-form">
+            <label class="field">
+              <span>Candidate Source IPs (comma-separated)</span>
+              <input type="text" id="sim-ips" value="203.0.113.45, 2001:db8:dead::42, 127.0.0.1, 169.254.1.10, 192.168.10.1" />
+            </label>
+            <label class="field">
+              <span>Allowlist CIDRs (comma-separated)</span>
+              <input type="text" id="sim-allowlist" value="192.168.10.1/32" />
+            </label>
+            <div class="sim-row">
+              <label class="field">
+                <span>nft Table Name</span>
+                <input type="text" id="sim-table" value="netguard" />
+              </label>
+              <label class="field">
+                <span>Timeout (sec)</span>
+                <input type="number" id="sim-timeout" value="900" min="10" />
+              </label>
+            </div>
+            <button id="sim-run-btn" class="btn btn-primary" type="button">Preview Quarantine Commands</button>
+          </div>
+          <div id="sim-results" class="sim-results"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3>Declarative nftables Ruleset</h3>
+              <p class="muted">Timeout-enabled kernel sets auto-expire quarantined hosts cleanly.</p>
+            </div>
+            <button id="copy-ruleset-btn" class="btn btn-secondary" type="button">Copy Ruleset</button>
+          </div>
+          <pre id="ruleset-pre" class="code-block">Loading ruleset...</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: SYSTEM ARCHITECTURE -->
+    <section id="tab-architecture" class="tab-panel">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>NetGuard Detection &amp; Quarantine Pipeline</h2>
+            <p class="muted">End-to-end architecture from packet capture through stateful protocol inspection to automated response.</p>
+          </div>
+        </div>
+        <div class="arch-svg-wrap">
+          <svg viewBox="0 0 980 340" class="arch-svg" role="img" aria-label="NetGuard System Architecture Diagram">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+              </marker>
+            </defs>
+            <!-- Stage 1: Ingestion -->
+            <rect x="20" y="30" width="190" height="275" rx="12" fill="#0f172a" stroke="#1e293b" stroke-width="2" />
+            <text x="115" y="56" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">1. INGESTION</text>
+            <rect x="38" y="80" width="154" height="58" rx="8" fill="#1e293b" stroke="#334155" />
+            <text x="115" y="106" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">Offline PCAP / PCAPNG</text>
+            <text x="115" y="124" text-anchor="middle" fill="#94a3b8" font-size="10">Scapy PcapReader Stream</text>
+
+            <rect x="38" y="154" width="154" height="58" rx="8" fill="#1e293b" stroke="#334155" />
+            <text x="115" y="180" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">Live Interface Sniff</text>
+            <text x="115" y="198" text-anchor="middle" fill="#94a3b8" font-size="10">BPF Filter &bull; store=False</text>
+
+            <rect x="38" y="228" width="154" height="58" rx="8" fill="#1e293b" stroke="#0284c7" />
+            <text x="115" y="254" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">PacketAnalyzer</text>
+            <text x="115" y="272" text-anchor="middle" fill="#94a3b8" font-size="10">Timestamp &amp; Telemetry Bus</text>
+
+            <!-- Arrows Stage 1 -> 2 -->
+            <line x1="210" y1="88" x2="262" y2="88" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow)" />
+            <line x1="210" y1="170" x2="262" y2="170" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow)" />
+            <line x1="210" y1="252" x2="262" y2="252" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow)" />
+
+            <!-- Stage 2: Stateful Detectors -->
+            <rect x="266" y="30" width="230" height="275" rx="12" fill="#0f172a" stroke="#1e293b" stroke-width="2" />
+            <text x="381" y="56" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">2. STATEFUL DETECTORS</text>
+
+            <rect x="282" y="72" width="198" height="66" rx="8" fill="#172554" stroke="#3b82f6" />
+            <text x="381" y="96" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">PortScanDetector</text>
+            <text x="381" y="114" text-anchor="middle" fill="#cbd5e1" font-size="10">SYN / FIN / NULL / Xmas</text>
+            <text x="381" y="128" text-anchor="middle" fill="#93c5fd" font-size="10">ECN Mask &bull; Sliding Window</text>
+
+            <rect x="282" y="150" width="198" height="66" rx="8" fill="#172554" stroke="#8b5cf6" />
+            <text x="381" y="174" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">DnsTunnelDetector</text>
+            <text x="381" y="192" text-anchor="middle" fill="#cbd5e1" font-size="10">Shannon Entropy &bull; TXT Size</text>
+            <text x="381" y="206" text-anchor="middle" fill="#c4b5fd" font-size="10">Suffix &amp; Prefix Allowlists</text>
+
+            <rect x="282" y="228" width="198" height="66" rx="8" fill="#172554" stroke="#f59e0b" />
+            <text x="381" y="252" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">ArpSpoofDetector</text>
+            <text x="381" y="270" text-anchor="middle" fill="#cbd5e1" font-size="10">IP-to-MAC Conflict Table</text>
+            <text x="381" y="284" text-anchor="middle" fill="#fde68a" font-size="10">L2 Mismatch &bull; RFC 5227 Safe</text>
+
+            <!-- Arrows Stage 2 -> 3 -->
+            <line x1="496" y1="168" x2="546" y2="168" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow)" />
+
+            <!-- Stage 3: Alert & Mitigation -->
+            <rect x="550" y="30" width="195" height="275" rx="12" fill="#0f172a" stroke="#1e293b" stroke-width="2" />
+            <text x="647" y="56" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">3. POLICY &amp; ALERTS</text>
+
+            <rect x="566" y="80" width="163" height="82" rx="8" fill="#1e293b" stroke="#10b981" />
+            <text x="647" y="106" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">MITRE Alert Bus</text>
+            <text x="647" y="124" text-anchor="middle" fill="#94a3b8" font-size="10">Cooldown Deduplication</text>
+            <text x="647" y="140" text-anchor="middle" fill="#6ee7b7" font-size="10">Structured Evidence JSON</text>
+
+            <rect x="566" y="182" width="163" height="104" rx="8" fill="#1e293b" stroke="#ef4444" />
+            <text x="647" y="208" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">Quarantine Gate</text>
+            <text x="647" y="226" text-anchor="middle" fill="#cbd5e1" font-size="10">Strict IP Parse &bull; Severity</text>
+            <text x="647" y="242" text-anchor="middle" fill="#fca5a5" font-size="10">Loopback &amp; CIDR Guard</text>
+            <text x="647" y="258" text-anchor="middle" fill="#94a3b8" font-size="10">Dry-Run / Live nftables</text>
+
+            <!-- Arrows Stage 3 -> 4 -->
+            <line x1="745" y1="120" x2="795" y2="120" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow)" />
+            <line x1="745" y1="234" x2="795" y2="234" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow)" />
+
+            <!-- Stage 4: Outputs -->
+            <rect x="799" y="30" width="161" height="275" rx="12" fill="#0f172a" stroke="#1e293b" stroke-width="2" />
+            <text x="879" y="56" text-anchor="middle" fill="#38bdf8" font-size="13" font-weight="700">4. OUTPUTS</text>
+
+            <rect x="814" y="80" width="131" height="58" rx="8" fill="#1e293b" stroke="#334155" />
+            <text x="879" y="106" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">JSON / JSONL</text>
+            <text x="879" y="123" text-anchor="middle" fill="#94a3b8" font-size="10">SIEM / Logstash Feed</text>
+
+            <rect x="814" y="152" width="131" height="58" rx="8" fill="#1e293b" stroke="#334155" />
+            <text x="879" y="178" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">SOC Web &amp; CLI</text>
+            <text x="879" y="195" text-anchor="middle" fill="#94a3b8" font-size="10">Telemetry &amp; Triage UI</text>
+
+            <rect x="814" y="224" width="131" height="58" rx="8" fill="#1e293b" stroke="#ef4444" />
+            <text x="879" y="250" text-anchor="middle" fill="#f8fafc" font-size="12" font-weight="600">Linux nftables</text>
+            <text x="879" y="267" text-anchor="middle" fill="#fca5a5" font-size="10">Timeout Drop Sets</text>
+          </svg>
+        </div>
+      </div>
+
+      <div class="telemetry-grid">
+        <div class="card">
+          <h3>Pipeline Component Details</h3>
+          <div id="arch-pipeline-list" class="arch-list"></div>
+        </div>
+        <div class="card">
+          <h3>MITRE ATT&amp;CK Coverage Matrix</h3>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Alert Types</th>
+                  <th>Tactic</th>
+                  <th>Technique</th>
+                  <th>Severity</th>
+                </tr>
+              </thead>
+              <tbody id="arch-mitre-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
